@@ -6,8 +6,8 @@ defmodule Claper.Events do
   """
 
   import Ecto.Query, warn: false
-  alias Claper.Repo
 
+  alias Claper.{Accounts, Presentations, Repo}
   alias Claper.Events.{Event, ActivityLeader}
 
   @default_page_size 5
@@ -22,7 +22,7 @@ defmodule Claper.Events do
 
   """
   def list_events(user_id, preload \\ []) do
-    from(e in Event, where: e.user_id == ^user_id, order_by: [desc: e.inserted_at])
+    from(e in Event, where: e.user_id == ^user_id, order_by: [desc: e.id])
     |> Repo.all()
     |> Repo.preload(preload)
   end
@@ -43,7 +43,7 @@ defmodule Claper.Events do
     query =
       from(e in Event,
         where: e.user_id == ^user_id,
-        order_by: [desc: e.inserted_at]
+        order_by: [desc: e.id]
       )
 
     Repo.paginate(query, page: page, page_size: page_size, preload: preload)
@@ -61,7 +61,7 @@ defmodule Claper.Events do
   def list_not_expired_events(user_id, preload \\ []) do
     from(e in Event,
       where: e.user_id == ^user_id and is_nil(e.expired_at),
-      order_by: [desc: e.inserted_at]
+      order_by: [desc: e.id]
     )
     |> Repo.all()
     |> Repo.preload(preload)
@@ -83,7 +83,7 @@ defmodule Claper.Events do
     query =
       from(e in Event,
         where: e.user_id == ^user_id and is_nil(e.expired_at),
-        order_by: [desc: e.inserted_at]
+        order_by: [desc: e.id]
       )
 
     Repo.paginate(query, page: page, page_size: page_size, preload: preload)
@@ -140,12 +140,12 @@ defmodule Claper.Events do
   """
   def list_managed_events_by(email, preload \\ []) do
     from(a in ActivityLeader,
-      join: u in Claper.Accounts.User,
+      join: u in Accounts.User,
       on: u.email == a.email,
       join: e in Event,
       on: e.id == a.event_id,
       where: a.email == ^email,
-      order_by: [desc: e.expired_at],
+      order_by: [desc: e.expired_at, desc: e.id],
       select: e
     )
     |> Repo.all()
@@ -167,12 +167,12 @@ defmodule Claper.Events do
 
     query =
       from(a in ActivityLeader,
-        join: u in Claper.Accounts.User,
+        join: u in Accounts.User,
         on: u.email == a.email,
         join: e in Event,
         on: e.id == a.event_id,
         where: a.email == ^email,
-        order_by: [desc: e.expired_at],
+        order_by: [desc: e.expired_at, desc: e.id],
         select: e
       )
 
@@ -181,7 +181,7 @@ defmodule Claper.Events do
 
   def count_managed_events_by(email) do
     from(a in ActivityLeader,
-      join: u in Claper.Accounts.User,
+      join: u in Accounts.User,
       on: u.email == a.email,
       join: e in Event,
       on: e.id == a.event_id,
@@ -193,8 +193,7 @@ defmodule Claper.Events do
 
   def count_expired_events(user_id) do
     from(e in Event,
-      where: e.user_id == ^user_id and not is_nil(e.expired_at),
-      order_by: [desc: e.expired_at]
+      where: e.user_id == ^user_id and not is_nil(e.expired_at)
     )
     |> Repo.aggregate(:count, :id)
   end
@@ -207,28 +206,42 @@ defmodule Claper.Events do
     from(e in Event,
       where:
         e.user_id == ^user_id and e.inserted_at <= ^DateTime.utc_now() and
-          e.inserted_at >= ^last_month,
-      order_by: [desc: e.id]
+          e.inserted_at >= ^last_month
     )
     |> Repo.aggregate(:count, :id)
   end
 
   @doc """
-  Gets a single event.
+  Gets a single event by serial ID or UUID.
 
   Raises `Ecto.NoResultsError` if the Event does not exist.
 
   ## Examples
 
+      iex> get_event!(123)
+      %Event{}
+
       iex> get_event!("123e4567-e89b-12d3-a456-426614174000")
       %Event{}
+
+      iex> get_event!(456)
+      ** (Ecto.NoResultsError)
 
       iex> get_event!("123e4567-e89b-12d3-a456-4266141740111")
       ** (Ecto.NoResultsError)
 
   """
-  def get_event!(id, preload \\ []),
-    do: Repo.get_by!(Event, uuid: id) |> Repo.preload(preload)
+  def get_event!(id_or_uuid, preload \\ [])
+
+  def get_event!(
+        <<_::bytes-8, "-", _::bytes-4, "-", _::bytes-4, "-", _::bytes-4, "-", _::bytes-12>> =
+          uuid,
+        preload
+      ),
+      do: Repo.get_by!(Event, uuid: uuid) |> Repo.preload(preload)
+
+  def get_event!(id, preload),
+    do: Repo.get!(Event, id) |> Repo.preload(preload)
 
   @doc """
   Gets a single managed event.
@@ -244,17 +257,18 @@ defmodule Claper.Events do
       ** (Ecto.NoResultsError)
 
   """
-  def get_managed_event!(current_user, id, preload \\ []) do
-    event = Repo.get_by!(Event, uuid: id)
-
-    is_leader =
-      Claper.Events.leaded_by?(current_user.email, event) || event.user_id == current_user.id
-
-    if is_leader do
-      event |> Repo.preload(preload)
-    else
-      raise Ecto.NoResultsError
-    end
+  def get_managed_event!(user, uuid, preload \\ []) do
+    from(
+      e in Event,
+      join: u in Accounts.User,
+      on: e.user_id == u.id,
+      left_join: a in ActivityLeader,
+      on: e.id == a.event_id,
+      where: e.uuid == ^uuid and (u.id == ^user.id or a.email == ^user.email),
+      select: e
+    )
+    |> Repo.one!()
+    |> Repo.preload(preload)
   end
 
   @doc """
@@ -305,42 +319,21 @@ defmodule Claper.Events do
   end
 
   @doc """
-  Get a single event with the same code excluding a specific event.
-
-  ## Examples
-
-      iex> get_different_event_with_code("Hello", 123)
-      %Event{}
-
-
-  """
-  def get_different_event_with_code(nil, _event_id), do: nil
-
-  def get_different_event_with_code(code, event_id) do
-    now = DateTime.utc_now()
-
-    from(e in Event, where: e.code == ^code and e.id != ^event_id and e.expired_at > ^now)
-    |> Repo.one()
-  end
-
-  @doc """
   Check if a user is a facilitator of a specific event.
 
   ## Examples
 
-      iex> leaded_by?("email@example.com", 123)
+      iex> led_by?("email@example.com", 123)
       true
 
-
   """
-  def leaded_by?(email, event) do
+  def led_by?(email, event) do
     from(a in ActivityLeader,
-      join: u in Claper.Accounts.User,
+      join: u in Accounts.User,
       on: u.email == a.email,
       join: e in Event,
       on: e.id == a.event_id,
-      where: a.email == ^email and e.id == ^event.id,
-      order_by: [desc: e.expired_at]
+      where: a.email == ^email and e.id == ^event.id
     )
     |> Repo.exists?()
   end
@@ -363,7 +356,10 @@ defmodule Claper.Events do
     |> validate_unique_event()
     |> case do
       {:ok, event} ->
-        Repo.insert(event, returning: [:uuid])
+        with {:ok, event} <- Repo.insert(event, returning: [:uuid]) do
+          broadcast_all_users({:created, event})
+          {:ok, event}
+        end
 
       {:error, changeset} ->
         {:error, %{changeset | action: :insert}}
@@ -384,6 +380,15 @@ defmodule Claper.Events do
     end
   end
 
+  defp get_different_event_with_code(nil, _event_id), do: nil
+
+  defp get_different_event_with_code(code, event_id) do
+    now = DateTime.utc_now()
+
+    from(e in Event, where: e.code == ^code and e.id != ^event_id and e.expired_at > ^now)
+    |> Repo.one()
+  end
+
   @doc """
   Updates an event.
 
@@ -402,7 +407,26 @@ defmodule Claper.Events do
     |> validate_unique_event()
     |> case do
       {:ok, event} ->
-        Repo.update(event, returning: [:uuid])
+        with {:ok, event} <- Repo.update(event, returning: [:uuid]) do
+          broadcast_all_users({:updated, event})
+
+          deleted_leaders =
+            attrs
+            |> Map.get("leaders", %{})
+            |> Map.values()
+            |> Enum.filter(fn
+              %{"delete" => "true"} -> true
+              _ -> false
+            end)
+
+          for %{"email" => leader_email} <- deleted_leaders,
+              leader = Accounts.get_user_by_email(leader_email),
+              not is_nil(leader) do
+            broadcast_user_events(leader.id, {:updated, event})
+          end
+
+          {:ok, event}
+        end
 
       {:error, changeset} ->
         {:error, %{changeset | action: :update}}
@@ -424,7 +448,9 @@ defmodule Claper.Events do
     |> Repo.update()
     |> case do
       {:ok, event} ->
-        broadcast({:ok, event, event.uuid}, :event_terminated)
+        broadcast_all_users({:updated, event})
+        broadcast_event(event.uuid, {:event_terminated, event.uuid})
+        {:ok, event}
 
       {:error, changeset} ->
         {:error, %{changeset | action: :update}}
@@ -517,7 +543,10 @@ defmodule Claper.Events do
   end
 
   @doc """
-  Duplicate an event
+  Duplicates an event.
+
+  Raises `Ecto.NoResultsError` for invalid `user_id`-`event_uuid` combinations
+  and returns an error tuple if any part of the transaction fails.
 
   ## Examples
 
@@ -527,157 +556,199 @@ defmodule Claper.Events do
       iex> duplicate(user_id, event_uuid)
       {:error, %Ecto.Changeset{}}
 
+      iex> duplicate(another_user_id, event_uuid)
+      ** (Ecto.NoResultsError)
+
   """
   def duplicate_event(user_id, event_uuid) do
-    case Ecto.Multi.new()
-         |> Ecto.Multi.run(:original_event, fn _repo, _changes ->
-           {:ok,
-            get_user_event!(user_id, event_uuid,
-              presentation_file: [
-                polls: [:poll_opts],
-                forms: [],
-                embeds: [],
-                quizzes: [:quiz_questions, quiz_questions: :quiz_question_opts],
-                presentation_state: []
-              ]
-            )}
-         end)
-         |> Ecto.Multi.run(:new_event, fn _repo, %{original_event: original_event} ->
-           new_code =
-             for _ <- 1..5,
-                 into: "",
-                 do: <<Enum.random(~c"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")>>
+    original =
+      get_user_event!(user_id, event_uuid,
+        presentation_file: [
+          presentation_state: [],
+          polls: [:poll_opts],
+          forms: [],
+          embeds: [],
+          quizzes: [quiz_questions: [:quiz_question_opts]]
+        ]
+      )
 
-           attrs =
-             Map.from_struct(original_event)
-             |> Map.drop([:id, :inserted_at, :updated_at, :presentation_file, :expired_at])
-             |> Map.put(:leaders, [])
-             |> Map.put(:code, "#{new_code}")
-             |> Map.put(:name, "#{original_event.name} (Copy)")
+    multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.run(:event, fn _repo, changes -> duplicate_event_attrs(original, changes) end)
+      |> Ecto.Multi.run(:presentation_file, fn _repo, changes ->
+        duplicate_presentation_file(original, changes)
+      end)
+      |> Ecto.Multi.run(:presentation_state, fn _repo, changes ->
+        duplicate_presentation_state(original, changes)
+      end)
+      |> Ecto.Multi.run(:polls, fn _repo, changes -> duplicate_polls(original, changes) end)
+      |> Ecto.Multi.run(:forms, fn _repo, changes -> duplicate_forms(original, changes) end)
+      |> Ecto.Multi.run(:embeds, fn _repo, changes -> duplicate_embeds(original, changes) end)
+      |> Ecto.Multi.run(:quizzes, fn _repo, changes -> duplicate_quizzes(original, changes) end)
 
-           create_event(attrs)
-         end)
-         |> Ecto.Multi.run(:new_presentation_file, fn _repo,
-                                                      %{
-                                                        original_event: original_event,
-                                                        new_event: new_event
-                                                      } ->
-           attrs =
-             Map.from_struct(original_event.presentation_file)
-             |> Map.drop([:id, :inserted_at, :updated_at, :presentation_state])
-             |> Map.put(:event_id, new_event.id)
-
-           Claper.Presentations.create_presentation_file(attrs)
-         end)
-         |> Ecto.Multi.run(:new_presentation_state, fn _repo,
-                                                       %{
-                                                         original_event: original_event,
-                                                         new_presentation_file:
-                                                           new_presentation_file
-                                                       } ->
-           attrs =
-             Map.from_struct(original_event.presentation_file.presentation_state)
-             |> Map.drop([:id, :inserted_at, :updated_at])
-             |> Map.put(:presentation_file_id, new_presentation_file.id)
-             |> Map.put(:position, 0)
-             |> Map.put(:banned, [])
-
-           Claper.Presentations.create_presentation_state(attrs)
-         end)
-         |> Ecto.Multi.run(:polls, fn _repo,
-                                      %{
-                                        new_presentation_file: new_presentation_file,
-                                        original_event: original_event
-                                      } ->
-           {:ok,
-            Enum.map(original_event.presentation_file.polls, fn poll ->
-              poll_attrs =
-                Map.from_struct(poll)
-                |> Map.drop([:id, :inserted_at, :updated_at])
-                |> Map.put(:presentation_file_id, new_presentation_file.id)
-                |> Map.put(
-                  :poll_opts,
-                  Enum.map(poll.poll_opts, fn opt ->
-                    Map.from_struct(opt)
-                    |> Map.drop([:id, :inserted_at, :updated_at])
-                  end)
-                )
-
-              {:ok, new_poll} = Claper.Polls.create_poll(poll_attrs)
-              new_poll
-            end)}
-         end)
-         |> Ecto.Multi.run(:forms, fn _repo,
-                                      %{
-                                        new_presentation_file: new_presentation_file,
-                                        original_event: original_event
-                                      } ->
-           {:ok,
-            Enum.map(original_event.presentation_file.forms, fn form ->
-              form_attrs =
-                Map.from_struct(form)
-                |> Map.drop([:id, :inserted_at, :updated_at])
-                |> Map.put(:presentation_file_id, new_presentation_file.id)
-                |> Map.put(
-                  :fields,
-                  Enum.map(form.fields, &Map.from_struct(&1))
-                )
-
-              {:ok, new_form} = Claper.Forms.create_form(form_attrs)
-              new_form
-            end)}
-         end)
-         |> Ecto.Multi.run(:embeds, fn _repo,
-                                       %{
-                                         new_presentation_file: new_presentation_file,
-                                         original_event: original_event
-                                       } ->
-           {:ok,
-            Enum.map(original_event.presentation_file.embeds, fn embed ->
-              embed_attrs =
-                Map.from_struct(embed)
-                |> Map.drop([:id, :inserted_at, :updated_at])
-                |> Map.put(:presentation_file_id, new_presentation_file.id)
-
-              {:ok, new_embed} = Claper.Embeds.create_embed(embed_attrs)
-              new_embed
-            end)}
-         end)
-         |> Ecto.Multi.run(:quizzes, fn _repo,
-                                        %{
-                                          new_presentation_file: new_presentation_file,
-                                          original_event: original_event
-                                        } ->
-           {:ok,
-            Enum.map(original_event.presentation_file.quizzes, fn quiz ->
-              quiz_attrs =
-                Map.from_struct(quiz)
-                |> Map.drop([:id, :inserted_at, :updated_at])
-                |> Map.put(:presentation_file_id, new_presentation_file.id)
-                |> Map.put(
-                  :quiz_questions,
-                  Enum.map(quiz.quiz_questions, fn question ->
-                    Map.from_struct(question)
-                    |> Map.drop([:id, :inserted_at, :updated_at])
-                    |> Map.put(
-                      :quiz_question_opts,
-                      Enum.map(question.quiz_question_opts, fn opt ->
-                        Map.from_struct(opt)
-                        |> Map.drop([:id, :inserted_at, :updated_at])
-                        |> Map.put(:response_count, 0)
-                      end)
-                    )
-                  end)
-                )
-
-              {:ok, new_quiz} = Claper.Quizzes.create_quiz(quiz_attrs)
-              new_quiz
-            end)}
-         end)
-         |> Repo.transaction() do
-      {:ok, %{new_event: new_event}} -> {:ok, new_event}
-      {:error, _failed_operation, failed_value, _changes_so_far} -> {:error, failed_value}
+    case Repo.transaction(multi) do
+      {:ok, %{event: event}} -> {:ok, event}
+      {:error, _operation, value, _changes} -> {:error, value}
     end
+  end
+
+  defp duplicate_event_attrs(original, _changes) do
+    code =
+      for _ <- 1..5,
+          into: "",
+          do: <<Enum.random(~c"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")>>
+
+    attrs =
+      Map.from_struct(original)
+      |> Map.drop([:id, :inserted_at, :updated_at, :presentation_file, :expired_at])
+      |> Map.put(:leaders, [])
+      |> Map.put(:code, "#{code}")
+      |> Map.put(:name, "#{original.name} (Copy)")
+
+    create_event(attrs)
+  end
+
+  defp duplicate_presentation_file(original, changes) do
+    case get_in(original.presentation_file) do
+      %Presentations.PresentationFile{} = presentation_file ->
+        attrs =
+          Map.from_struct(presentation_file)
+          |> Map.drop([:id, :inserted_at, :updated_at, :presentation_state])
+          |> Map.put(:event_id, changes.event.id)
+
+        Presentations.create_presentation_file(attrs)
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp duplicate_presentation_state(original, changes) do
+    case get_in(original.presentation_file.presentation_state) do
+      %Presentations.PresentationState{} = presentation_state ->
+        attrs =
+          Map.from_struct(presentation_state)
+          |> Map.drop([:id, :inserted_at, :updated_at])
+          |> Map.put(:presentation_file_id, changes.presentation_file.id)
+          |> Map.put(:position, 0)
+          |> Map.put(:banned, [])
+
+        Presentations.create_presentation_state(attrs)
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp duplicate_polls(original, changes) do
+    case get_in(original.presentation_file.polls) do
+      polls when is_list(polls) ->
+        polls =
+          for poll <- polls do
+            attrs =
+              Map.from_struct(poll)
+              |> Map.drop([:id, :inserted_at, :updated_at])
+              |> Map.put(:presentation_file_id, changes.presentation_file.id)
+              |> Map.put(
+                :poll_opts,
+                Enum.map(poll.poll_opts, fn opt ->
+                  Map.from_struct(opt)
+                  |> Map.drop([:id, :inserted_at, :updated_at, :vote_count])
+                end)
+              )
+
+            {:ok, poll} = Claper.Polls.create_poll(attrs)
+            poll
+          end
+
+        {:ok, polls}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp duplicate_forms(original, changes) do
+    case get_in(original.presentation_file.forms) do
+      forms when is_list(forms) ->
+        forms =
+          for form <- forms do
+            attrs =
+              Map.from_struct(form)
+              |> Map.drop([:id, :inserted_at, :updated_at])
+              |> Map.put(:presentation_file_id, changes.presentation_file.id)
+              |> Map.put(
+                :fields,
+                Enum.map(form.fields, &Map.from_struct(&1))
+              )
+
+            {:ok, form} = Claper.Forms.create_form(attrs)
+            form
+          end
+
+        {:ok, forms}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp duplicate_embeds(original, changes) do
+    case get_in(original.presentation_file.embeds) do
+      embeds when is_list(embeds) ->
+        embeds =
+          for embed <- embeds do
+            attrs =
+              Map.from_struct(embed)
+              |> Map.drop([:id, :inserted_at, :updated_at])
+              |> Map.put(:presentation_file_id, changes.presentation_file.id)
+
+            {:ok, embed} = Claper.Embeds.create_embed(attrs)
+            embed
+          end
+
+        {:ok, embeds}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp duplicate_quizzes(original, changes) do
+    case get_in(original.presentation_file.quizzes) do
+      quizzes when is_list(quizzes) ->
+        quizzes =
+          for quiz <- quizzes do
+            attrs =
+              Map.from_struct(quiz)
+              |> Map.drop([:id, :inserted_at, :updated_at])
+              |> Map.put(:presentation_file_id, changes.presentation_file.id)
+              |> Map.put(:quiz_questions, Enum.map(quiz.quiz_questions, &map_quiz_question/1))
+
+            {:ok, quiz} = Claper.Quizzes.create_quiz(attrs)
+            quiz
+          end
+
+        {:ok, quizzes}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp map_quiz_question(question) do
+    Map.from_struct(question)
+    |> Map.drop([:id, :inserted_at, :updated_at])
+    |> Map.put(
+      :quiz_question_opts,
+      Enum.map(question.quiz_question_opts, &map_quiz_question_opt/1)
+    )
+  end
+
+  defp map_quiz_question_opt(opt) do
+    Map.from_struct(opt)
+    |> Map.drop([:id, :inserted_at, :updated_at])
+    |> Map.put(:response_count, 0)
   end
 
   @doc """
@@ -693,7 +764,22 @@ defmodule Claper.Events do
 
   """
   def delete_event(%Event{} = event) do
-    Repo.delete(event)
+    leaders =
+      for %{email: email} <- get_activity_leaders_for_event(event.id),
+          leader = Accounts.get_user_by_email(email),
+          not is_nil(leader) do
+        leader
+      end
+
+    with {:ok, event} <- Repo.delete(event) do
+      broadcast_user_events(event.user_id, {:deleted, event})
+
+      for leader <- leaders do
+        broadcast_user_events(leader.id, {:deleted, event})
+      end
+
+      {:ok, event}
+    end
   end
 
   @doc """
@@ -708,8 +794,6 @@ defmodule Claper.Events do
   def change_event(%Event{} = event, attrs \\ %{}) do
     Event.changeset(event, attrs)
   end
-
-  alias Claper.Events.ActivityLeader
 
   @doc """
   Creates a activity leader.
@@ -756,7 +840,7 @@ defmodule Claper.Events do
   """
   def get_activity_leaders_for_event(event_id) do
     from(a in ActivityLeader,
-      left_join: u in Claper.Accounts.User,
+      left_join: u in Accounts.User,
       on: u.email == a.email,
       where: a.event_id == ^event_id,
       select: %{a | user_id: u.id}
@@ -777,13 +861,48 @@ defmodule Claper.Events do
     ActivityLeader.changeset(activity_leader, attrs)
   end
 
-  defp broadcast({:ok, e, event_uuid}, event) do
-    Phoenix.PubSub.broadcast(
-      Claper.PubSub,
-      "event:#{event_uuid}",
-      {event, event_uuid}
-    )
+  @doc """
+  Subscribes to an event's public `Phoenix.PubSub` topic.
 
-    {:ok, e}
+  The broadcasted messages match the pattern:
+
+    * {:terminated, event_uuid}
+
+  """
+  def subscribe_event(event_uuid) when is_binary(event_uuid) do
+    Phoenix.PubSub.subscribe(Claper.PubSub, "event:#{event_uuid}")
+  end
+
+  defp broadcast_event(event_uuid, message) when is_binary(event_uuid) do
+    Phoenix.PubSub.broadcast(Claper.PubSub, "event:#{event_uuid}", message)
+  end
+
+  @doc """
+  Subscribes to a user's events private `Phoenix.PubSub` topic.
+
+  The broadcasted messages match the pattern:
+
+    * {:created, %Event{}}
+    * {:updated, %Event{}}
+    * {:deleted, %Event{}}
+
+  """
+  def subscribe_user_events(user_id) when is_integer(user_id) do
+    Phoenix.PubSub.subscribe(Claper.PubSub, "user:#{user_id}:events")
+  end
+
+  def broadcast_user_events(user_id, message) when is_integer(user_id) do
+    Phoenix.PubSub.broadcast(Claper.PubSub, "user:#{user_id}:events", message)
+  end
+
+  defp broadcast_all_users({_type, %Event{} = event} = message, _opts \\ []) do
+    event = Repo.preload(event, [:leaders])
+    broadcast_user_events(event.user_id, message)
+
+    for %{email: leader_email} <- event.leaders,
+        leader = Accounts.get_user_by_email(leader_email),
+        not is_nil(leader) do
+      broadcast_user_events(leader.id, message)
+    end
   end
 end

@@ -14,6 +14,10 @@ defmodule ClaperWeb.Router do
     plug(ClaperWeb.Plugs.Locale)
   end
 
+  pipeline :admin_required do
+    plug(ClaperWeb.Plugs.AdminRequiredPlug)
+  end
+
   pipeline :lti do
     plug(:accepts, ["html", "json"])
     plug(:put_root_layout, html: {ClaperWeb.LayoutView, :root})
@@ -29,6 +33,13 @@ defmodule ClaperWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
+  end
+
+  pipeline :rate_limit_auth do
+    plug ClaperWeb.Plugs.RateLimitPlug,
+      max_requests: 10,
+      interval_ms: 60_000,
+      prefix: "auth"
   end
 
   # Manage attendee_identifier in requests
@@ -116,7 +127,7 @@ defmodule ClaperWeb.Router do
 
   ## Authentication routes
   scope "/", ClaperWeb do
-    pipe_through([:browser, :redirect_if_user_is_authenticated])
+    pipe_through([:browser, :redirect_if_user_is_authenticated, :rate_limit_auth])
 
     get("/users/register", UserRegistrationController, :new)
     post("/users/register", UserRegistrationController, :create)
@@ -164,5 +175,29 @@ defmodule ClaperWeb.Router do
     get("/privacy", PageController, :privacy)
 
     delete("/users/log_out", UserSessionController, :delete)
+  end
+
+  # Admin panel routes - LiveView implementation
+  live_session :admin, root_layout: {ClaperWeb.LayoutView, :admin} do
+    scope "/admin", ClaperWeb.AdminLive do
+      pipe_through [:browser, :require_authenticated_user, :admin_required]
+
+      live "/", DashboardLive, :index
+
+      live "/users", UserLive, :index
+      live "/users/new", UserLive, :new
+      live "/users/:id/edit", UserLive, :edit
+      live "/users/:id", UserLive, :show
+
+      live "/events", EventLive, :index
+      live "/events/new", EventLive, :new
+      live "/events/:id/edit", EventLive, :edit
+      live "/events/:id", EventLive, :show
+
+      live "/oidc_providers", OidcProviderLive, :index
+      live "/oidc_providers/new", OidcProviderLive, :new
+      live "/oidc_providers/:id/edit", OidcProviderLive, :edit
+      live "/oidc_providers/:id", OidcProviderLive, :show
+    end
   end
 end

@@ -24,6 +24,17 @@ defmodule ClaperWeb.LayoutView do
     end
   end
 
+  def get_section_path(conn) do
+    section = Enum.at(conn.path_info, 1)
+
+    case section do
+      "users" -> ~p"/admin/users"
+      "events" -> ~p"/admin/events"
+      "oidc_providers" -> ~p"/admin/oidc_providers"
+      _ -> ~p"/admin"
+    end
+  end
+
   def active_link(%Plug.Conn{} = conn, text, opts) do
     class =
       [opts[:class], active_class(conn, opts[:to])]

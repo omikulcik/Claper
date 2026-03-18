@@ -13,6 +13,8 @@ defmodule Claper.Accounts.User do
           confirmed_at: NaiveDateTime.t() | nil,
           locale: String.t() | nil,
           events: [Claper.Events.Event.t()] | nil,
+          role: Claper.Accounts.Role.t() | nil,
+          role_id: integer() | nil,
           inserted_at: NaiveDateTime.t(),
           updated_at: NaiveDateTime.t(),
           deleted_at: NaiveDateTime.t() | nil
@@ -30,20 +32,34 @@ defmodule Claper.Accounts.User do
 
     has_many :events, Claper.Events.Event
     has_one :lti_user, Lti13.Users.User
+    belongs_to :role, Claper.Accounts.Role
+    has_many :quiz_responses, Claper.Quizzes.QuizResponse
 
     timestamps()
   end
 
   def registration_changeset(user, attrs, opts \\ []) do
     user
-    |> cast(attrs, [:email, :confirmed_at, :password, :is_randomized_password])
+    |> cast(attrs, [:email, :confirmed_at, :password, :is_randomized_password, :role_id])
     |> validate_email()
     |> validate_password(opts)
+    |> foreign_key_constraint(:role_id)
   end
 
   def preferences_changeset(user, attrs) do
     user
     |> cast(attrs, [:locale])
+  end
+
+  @doc """
+  A changeset for admin operations on users.
+  """
+  def admin_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:email, :confirmed_at, :password, :role_id])
+    |> validate_email()
+    |> validate_admin_password(opts)
+    |> foreign_key_constraint(:role_id)
   end
 
   @doc """
@@ -68,6 +84,19 @@ defmodule Claper.Accounts.User do
     |> validate_required([:password])
     |> validate_length(:password, min: 6, max: 72)
     |> maybe_hash_password(opts)
+  end
+
+  defp validate_admin_password(changeset, opts) do
+    password = get_change(changeset, :password)
+
+    # Only validate password if it's provided
+    if password && password != "" do
+      changeset
+      |> validate_length(:password, min: 6, max: 72)
+      |> maybe_hash_password(opts)
+    else
+      changeset
+    end
   end
 
   defp maybe_hash_password(changeset, opts) do

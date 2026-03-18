@@ -1,7 +1,7 @@
 defmodule Claper.MixProject do
   use Mix.Project
 
-  @version "2.4.0"
+  @version "2.5.0"
 
   def project do
     [
@@ -95,6 +95,7 @@ defmodule Claper.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:dart_sass, "~> 0.7", runtime: Mix.env() == :dev},
       {:swoosh, "~> 1.19"},
+      {:gen_smtp, "~> 1.3"},
       {:finch, "~> 0.19"},
       {:telemetry_metrics, "~> 1.1"},
       {:telemetry_poller, "~> 1.2"},
@@ -103,10 +104,8 @@ defmodule Claper.MixProject do
       {:sweet_xml, "~> 0.7"},
       {:plug_cowboy, "~> 2.7"},
       {:hashids, "~> 2.1"},
-      {:mogrify, "~> 0.9"},
       {:libcluster, "~> 3.5"},
       {:porcelain, "~> 2.0"},
-      {:hackney, "~> 1.24"},
       {:csv, "~> 3.2"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:joken, "~> 2.6"},
@@ -115,8 +114,7 @@ defmodule Claper.MixProject do
       {:uuid, "~> 1.1"},
       {:oidcc, "~> 3.5"},
       {:oban, "~> 2.19"},
-      {:mua, "~> 0.2"},
-      {:mail, "~> 0.5"},
+      {:hammer, "~> 7.0"},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev}
     ]
   end
@@ -136,6 +134,7 @@ defmodule Claper.MixProject do
       "assets.deploy": [
         "cmd --cd assets npm install",
         "tailwind default --minify",
+        "tailwind admin --minify",
         "esbuild default --minify",
         "sass default --no-source-map --style=compressed",
         "phx.digest"

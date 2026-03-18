@@ -4,7 +4,7 @@ defmodule Claper.Tasks.Converter do
   We use a hash to identify the presentation. A new hash is generated when the conversion is finished and the presentation is being uploaded.
   """
 
-  alias ExAws.S3
+  alias Claper.Events
   alias Porcelain.Result
 
   @doc """
@@ -19,11 +19,7 @@ defmodule Claper.Tasks.Converter do
         "status" => "progress"
       })
 
-    Phoenix.PubSub.broadcast(
-      Claper.PubSub,
-      "events:#{user_id}",
-      {:presentation_file_process_done, presentation}
-    )
+    Events.broadcast_user_events(user_id, {:presentation_file_process_done, presentation})
 
     path =
       Path.join([
@@ -34,7 +30,14 @@ defmodule Claper.Tasks.Converter do
 
     IO.puts("Starting conversion for #{hash}... (copy: #{is_copy})")
 
-    file_to_pdf(String.to_atom(ext), path, file)
+    ext_atom =
+      case ext do
+        "ppt" -> :ppt
+        "pptx" -> :pptx
+        other -> other
+      end
+
+    file_to_pdf(ext_atom, path, file)
     |> pdf_to_jpg(path, presentation, user_id)
     |> jpg_upload(hash, path, presentation, user_id, is_copy)
   end
@@ -53,11 +56,11 @@ defmodule Claper.Tasks.Converter do
       )
     else
       stream =
-        ExAws.S3.list_objects(get_aws_bucket(), prefix: "presentations/#{hash}")
+        ExAws.S3.list_objects(get_s3_bucket(), prefix: "presentations/#{hash}")
         |> ExAws.stream!()
         |> Stream.map(& &1.key)
 
-      ExAws.S3.delete_all_objects(get_aws_bucket(), stream) |> ExAws.request()
+      ExAws.S3.delete_all_objects(get_s3_bucket(), stream) |> ExAws.request()
     end
   end
 
@@ -137,9 +140,9 @@ defmodule Claper.Tasks.Converter do
         IO.puts("Uploads #{f} to presentations/#{new_hash}/#{Path.basename(f)}")
 
         f
-        |> S3.Upload.stream_file()
-        |> S3.upload(
-          get_aws_bucket(),
+        |> ExAws.S3.Upload.stream_file()
+        |> ExAws.S3.upload(
+          get_s3_bucket(),
           "presentations/#{new_hash}/#{Path.basename(f)}",
           acl: "public-read"
         )
@@ -167,11 +170,7 @@ defmodule Claper.Tasks.Converter do
            }) do
       if get_presentation_storage() != "local", do: File.rm_rf!(path)
 
-      Phoenix.PubSub.broadcast(
-        Claper.PubSub,
-        "events:#{user_id}",
-        {:presentation_file_process_done, presentation}
-      )
+      Events.broadcast_user_events(user_id, {:presentation_file_process_done, presentation})
     end
   end
 
@@ -182,11 +181,7 @@ defmodule Claper.Tasks.Converter do
            }) do
       File.rm_rf!(path)
 
-      Phoenix.PubSub.broadcast(
-        Claper.PubSub,
-        "events:#{user_id}",
-        {:presentation_file_process_done, presentation}
-      )
+      Events.broadcast_user_events(user_id, {:presentation_file_process_done, presentation})
     end
   end
 
@@ -198,8 +193,8 @@ defmodule Claper.Tasks.Converter do
     Application.get_env(:claper, :storage_dir)
   end
 
-  defp get_aws_bucket do
-    Application.get_env(:claper, :presentations) |> Keyword.get(:aws_bucket)
+  defp get_s3_bucket do
+    Application.get_env(:claper, :presentations) |> Keyword.get(:s3_bucket)
   end
 
   defp get_resolution do

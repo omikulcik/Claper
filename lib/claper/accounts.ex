@@ -7,7 +7,7 @@ defmodule Claper.Accounts do
   alias Claper.Accounts
   alias Claper.Repo
 
-  alias Claper.Accounts.{User, UserToken, UserNotifier}
+  alias Claper.Accounts.{User, UserToken, UserNotifier, Role}
 
   @doc """
   Creates a user.
@@ -20,6 +20,9 @@ defmodule Claper.Accounts do
       {:error, %Ecto.Changeset{}}
   """
   def create_user(attrs) do
+    # Get user role if not explicitly set
+    attrs = maybe_set_default_role(attrs)
+
     %User{}
     |> User.registration_changeset(attrs)
     |> Repo.insert(returning: [:uuid])
@@ -55,16 +58,37 @@ defmodule Claper.Accounts do
   def get_user_by_email_or_create(email) when is_binary(email) do
     case get_user_by_email(email) do
       nil ->
-        create_user(%{
+        attrs = %{
           email: email,
           confirmed_at: DateTime.utc_now(),
           is_randomized_password: true,
           password: :crypto.strong_rand_bytes(32)
-        })
+        }
+
+        # Set default role if not explicitly set
+        attrs = maybe_set_default_role(attrs)
+
+        create_user(attrs)
 
       user ->
         {:ok, user}
     end
+  end
+
+  @doc """
+  Lists all users that are not deleted.
+
+  ## Examples
+
+      iex> list_users()
+      [%User{}, ...]
+
+  """
+  def list_users(preload \\ []) do
+    User
+    |> where([u], is_nil(u.deleted_at))
+    |> Repo.all()
+    |> Repo.preload(preload)
   end
 
   @doc """
@@ -147,6 +171,9 @@ defmodule Claper.Accounts do
 
   """
   def register_user(attrs) do
+    # Get user role if not explicitly set
+    attrs = maybe_set_default_role(attrs)
+
     %User{}
     |> User.registration_changeset(attrs)
     |> Repo.insert(returning: [:uuid])
@@ -163,6 +190,37 @@ defmodule Claper.Accounts do
   """
   def change_user_registration(%User{} = user, attrs \\ %{}) do
     User.registration_changeset(user, attrs, hash_password: false)
+  end
+
+  @doc """
+  Returns an `%Ecto.Changeset{}` for tracking user changes for admin operations.
+
+  ## Examples
+
+      iex> change_user(user)
+      %Ecto.Changeset{data: %User{}}
+
+  """
+  def change_user(%User{} = user, attrs \\ %{}) do
+    User.admin_changeset(user, attrs, hash_password: false)
+  end
+
+  @doc """
+  Updates a user for admin operations.
+
+  ## Examples
+
+      iex> update_user(user, %{field: new_value})
+      {:ok, %User{}}
+
+      iex> update_user(user, %{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def update_user(%User{} = user, attrs) do
+    user
+    |> User.admin_changeset(attrs)
+    |> Repo.update()
   end
 
   ## Settings
@@ -262,6 +320,23 @@ defmodule Claper.Accounts do
     end
   end
 
+  # Alternative version with different signature - keeping for compatibility
+  def update_user_password(user, %{"current_password" => curr_pw} = attrs) do
+    changeset =
+      user
+      |> User.password_changeset(attrs)
+      |> User.validate_current_password(curr_pw)
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.update(:user, changeset)
+    |> Ecto.Multi.delete_all(:tokens, UserToken.user_and_contexts_query(user, :all))
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{user: user}} -> {:ok, user}
+      {:error, :user, changeset, _} -> {:error, changeset}
+    end
+  end
+
   @doc """
   Sets the user password.
   ## Examples
@@ -341,34 +416,6 @@ defmodule Claper.Accounts do
   """
   def change_user_password(user, attrs \\ %{}) do
     User.password_changeset(user, attrs)
-  end
-
-  @doc """
-  Updates the user password.
-
-  ## Examples
-
-      iex> update_user_password(user, "valid password", %{password: ...})
-      {:ok, %User{}}
-
-      iex> update_user_password(user, "invalid password", %{password: ...})
-      {:error, %Ecto.Changeset{}}
-
-  """
-  def update_user_password(user, %{"current_password" => curr_pw} = attrs) do
-    changeset =
-      user
-      |> User.password_changeset(attrs)
-      |> User.validate_current_password(curr_pw)
-
-    Ecto.Multi.new()
-    |> Ecto.Multi.update(:user, changeset)
-    |> Ecto.Multi.delete_all(:tokens, UserToken.user_and_contexts_query(user, :all))
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{user: user}} -> {:ok, user}
-      {:error, :user, changeset, _} -> {:error, changeset}
-    end
   end
 
   ## Session
@@ -601,5 +648,272 @@ defmodule Claper.Accounts do
       {:ok, user} -> {:ok, user |> Repo.preload(:user)}
       {:error, changeset} -> {:error, changeset}
     end
+  end
+
+  ## Role Management
+
+  @doc """
+  Returns the list of roles.
+
+  ## Examples
+
+      iex> list_roles()
+      [%Role{}, ...]
+
+  """
+  def list_roles do
+    Repo.all(Role)
+  end
+
+  @doc """
+  Gets a single role.
+
+  Raises `Ecto.NoResultsError` if the Role does not exist.
+
+  ## Examples
+
+      iex> get_role!(123)
+      %Role{}
+
+      iex> get_role!(456)
+      ** (Ecto.NoResultsError)
+
+  """
+  def get_role!(id), do: Repo.get!(Role, id)
+
+  @doc """
+  Gets a role by name.
+
+  Returns nil if the Role does not exist.
+
+  ## Examples
+
+      iex> get_role_by_name("admin")
+      %Role{}
+
+      iex> get_role_by_name("nonexistent")
+      nil
+
+  """
+  def get_role_by_name(name) when is_binary(name) do
+    Repo.get_by(Role, name: name)
+  end
+
+  @doc """
+  Creates a role.
+
+  ## Examples
+
+      iex> create_role(%{field: value})
+      {:ok, %Role{}}
+
+      iex> create_role(%{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def create_role(attrs \\ %{}) do
+    %Role{}
+    |> Role.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Updates a role.
+
+  ## Examples
+
+      iex> update_role(role, %{field: new_value})
+      {:ok, %Role{}}
+
+      iex> update_role(role, %{field: bad_value})
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def update_role(%Role{} = role, attrs) do
+    role
+    |> Role.changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
+  Deletes a role.
+
+  ## Examples
+
+      iex> delete_role(role)
+      {:ok, %Role{}}
+
+      iex> delete_role(role)
+      {:error, %Ecto.Changeset{}}
+
+  """
+  def delete_role(%Role{} = role) do
+    Repo.delete(role)
+  end
+
+  @doc """
+  Returns an `%Ecto.Changeset{}` for tracking role changes.
+
+  ## Examples
+
+      iex> change_role(role)
+      %Ecto.Changeset{data: %Role{}}
+
+  """
+  def change_role(%Role{} = role, attrs \\ %{}) do
+    Role.changeset(role, attrs)
+  end
+
+  @doc """
+  Assigns a role to a user by role name or role struct.
+
+  ## Examples
+
+      iex> assign_role(user, "admin")
+      {:ok, %User{}}
+
+      iex> assign_role(user, %Role{id: 1})
+      {:ok, %User{}}
+
+      iex> assign_role(user, "unknown")
+      {:error, :role_not_found}
+  """
+  def assign_role(%User{} = user, %Role{} = role) do
+    user
+    |> Ecto.Changeset.change(%{role_id: role.id})
+    |> Repo.update()
+  end
+
+  def assign_role(%User{} = user, role_name) when is_binary(role_name) do
+    case get_role_by_name(role_name) do
+      nil ->
+        {:error, :role_not_found}
+
+      role ->
+        user
+        |> Ecto.Changeset.change(%{role_id: role.id})
+        |> Repo.update()
+    end
+  end
+
+  @doc """
+  Gets the role of a user.
+
+  ## Examples
+
+      iex> get_user_role(user)
+      %Role{}
+
+      iex> get_user_role(user_without_role)
+      nil
+  """
+  def get_user_role(%User{} = user) do
+    user = user |> Repo.preload(:role)
+    user.role
+  end
+
+  @doc """
+  Lists users by role name.
+
+  ## Examples
+
+      iex> list_users_by_role("admin")
+      [%User{}, ...]
+
+      iex> list_users_by_role("unknown")
+      []
+  """
+  def list_users_by_role(role_name) when is_binary(role_name) do
+    case get_role_by_name(role_name) do
+      nil ->
+        []
+
+      role ->
+        User
+        |> where([u], u.role_id == ^role.id and is_nil(u.deleted_at))
+        |> Repo.all()
+    end
+  end
+
+  @doc """
+  Checks if a user has a specific role.
+
+  ## Examples
+
+      iex> user_has_role?(user, "admin")
+      true
+
+      iex> user_has_role?(user, "unknown")
+      false
+  """
+  def user_has_role?(%User{} = user, role_name) when is_binary(role_name) do
+    case get_user_role(user) do
+      nil -> false
+      role -> role.name == role_name
+    end
+  end
+
+  @doc """
+  Promotes a user to admin role.
+
+  ## Examples
+
+      iex> promote_to_admin(user)
+      {:ok, %User{}}
+
+      iex> promote_to_admin(already_admin_user)
+      {:ok, %User{}}
+  """
+  def promote_to_admin(%User{} = user) do
+    assign_role(user, "admin")
+  end
+
+  @doc """
+  Demotes a user from admin role to regular user role.
+
+  ## Examples
+
+      iex> demote_from_admin(admin_user)
+      {:ok, %User{}}
+
+      iex> demote_from_admin(already_user_user)
+      {:ok, %User{}}
+  """
+  def demote_from_admin(%User{} = user) do
+    assign_role(user, "user")
+  end
+
+  # Private helper to set default role if not already set
+  defp maybe_set_default_role(attrs) do
+    # Only set default role if role_id is not explicitly provided
+    case Map.get(attrs, :role_id) || Map.get(attrs, "role_id") do
+      nil -> set_default_user_role(attrs)
+      _ -> attrs
+    end
+  end
+
+  defp set_default_user_role(attrs) do
+    case get_role_by_name("user") do
+      nil -> attrs
+      user_role -> put_role_id(attrs, user_role.id)
+    end
+  end
+
+  defp put_role_id(attrs, role_id) do
+    key = determine_role_key(attrs)
+    Map.put(attrs, key, role_id)
+  end
+
+  defp determine_role_key(attrs) do
+    if has_string_keys?(attrs) do
+      "role_id"
+    else
+      :role_id
+    end
+  end
+
+  defp has_string_keys?(attrs) do
+    is_map(attrs) and map_size(attrs) > 0 and
+      Enum.all?(Map.keys(attrs), &is_binary/1)
   end
 end

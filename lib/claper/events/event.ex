@@ -45,11 +45,12 @@ defmodule Claper.Events.Event do
       :code,
       :started_at,
       :expired_at,
-      :audience_peak
+      :audience_peak,
+      :user_id
     ])
     |> cast_assoc(:presentation_file)
     |> cast_assoc(:leaders)
-    |> validate_required([:code, :name])
+    |> validate_required([:name, :code, :started_at])
   end
 
   def create_changeset(event, attrs) do
@@ -57,7 +58,7 @@ defmodule Claper.Events.Event do
     |> cast(attrs, [:name, :code, :user_id, :started_at, :expired_at])
     |> cast_assoc(:presentation_file)
     |> cast_assoc(:leaders)
-    |> validate_required([:name, :code, :started_at])
+    |> validate_required([:name, :code, :started_at, :user_id])
     |> validate_length(:code, min: 5, max: 10)
     |> validate_length(:name, min: 5, max: 50)
     |> downcase_code
@@ -74,10 +75,10 @@ defmodule Claper.Events.Event do
 
   def update_changeset(event, attrs) do
     event
-    |> cast(attrs, [:name, :code, :started_at, :expired_at, :audience_peak])
+    |> cast(attrs, [:name, :code, :started_at, :expired_at, :audience_peak, :user_id])
     |> cast_assoc(:presentation_file)
     |> cast_assoc(:leaders)
-    |> validate_required([:code, :started_at])
+    |> validate_required([:name, :code, :started_at, :user_id])
     |> validate_length(:code, min: 5, max: 10)
     |> validate_length(:name, min: 5, max: 50)
     |> downcase_code
@@ -90,8 +91,8 @@ defmodule Claper.Events.Event do
     change(event, expired_at: expiry)
   end
 
-  def subscribe(event_id) do
-    Phoenix.PubSub.subscribe(Claper.PubSub, "event:#{event_id}")
+  def subscribe(event_uuid) do
+    Phoenix.PubSub.subscribe(Claper.PubSub, "event:#{event_uuid}")
   end
 
   def started?(event) do

@@ -2,6 +2,8 @@ defmodule Claper.Quizzes do
   import Ecto.Query, warn: false
   alias Claper.Repo
 
+  alias Claper.Accounts.User
+
   alias Claper.Quizzes.Quiz
   alias Claper.Quizzes.QuizQuestion
   alias Claper.Quizzes.QuizQuestionOpt
@@ -265,37 +267,74 @@ defmodule Claper.Quizzes do
       {:ok, quiz}
 
   """
-  def submit_quiz(user_id, quiz_opts, quiz_id)
-      when is_number(user_id) and is_list(quiz_opts) do
-    case Enum.reduce(quiz_opts, Ecto.Multi.new(), fn opt, multi ->
-           Ecto.Multi.update(
-             multi,
-             {:update_quiz_opt, opt.id},
+
+  # Pattern match on user, from user we create QuizResponse struct
+  # def submit_quiz(user_id, quiz_opts, quiz_id)
+  #     when is_number(user_id) and is_list(quiz_opts) do
+  #   quiz_opts = Enum.with_index(quiz_opts)
+
+  #   case Enum.reduce(quiz_opts, Ecto.Multi.new(), fn {opt, index}, multi ->
+  #          unique_key = "#{opt.id}_#{user_id + index}"
+
+  #          multi
+  #          |> Ecto.Multi.update(
+  #            "update_quiz_opt_#{unique_key}",
+  #            QuizQuestionOpt.changeset(opt, %{"response_count" => opt.response_count + 1})
+  #          )
+  #          |> Ecto.Multi.insert(
+  #            "insert_quiz_response_#{unique_key}",
+  #            QuizResponse.changeset(%QuizResponse{}, %{
+  #              user_id: user_id,
+  #              quiz_question_opt_id: opt.id,
+  #              quiz_question_id: opt.quiz_question_id,
+  #              quiz_id: quiz_id
+  #            })
+  #          )
+  #        end)
+  #        |> Repo.transact() do
+  #     {:ok, _} ->
+  #       quiz = get_quiz!(quiz_id, [:quiz_questions, quiz_questions: :quiz_question_opts])
+  #       Lti13.QuizScoreReporter.report_quiz_score(quiz, user_id)
+  #       {:ok, quiz}
+  #   end
+  # end
+
+  def submit_quiz(%User{} = user, event_uuid, quiz_opts, quiz_id) do
+    quiz_opts = quiz_opts |> Enum.uniq_by(& &1.id) |> Enum.with_index()
+
+    case Enum.reduce(quiz_opts, Ecto.Multi.new(), fn {opt, index}, multi ->
+           unique_key = "#{opt.id}_#{user.id + index}"
+
+           multi
+           |> Ecto.Multi.update(
+             "update_quiz_opt_#{unique_key}",
              QuizQuestionOpt.changeset(opt, %{"response_count" => opt.response_count + 1})
            )
            |> Ecto.Multi.insert(
-             {:insert_quiz_response, opt.id},
-             QuizResponse.changeset(%QuizResponse{}, %{
-               user_id: user_id,
+             "insert_quiz_response_#{unique_key}",
+             Ecto.build_assoc(user, :quiz_responses, %{
                quiz_question_opt_id: opt.id,
                quiz_question_id: opt.quiz_question_id,
                quiz_id: quiz_id
              })
            )
          end)
-         |> Repo.transaction() do
+         |> Repo.transact() do
       {:ok, _} ->
         quiz = get_quiz!(quiz_id, [:quiz_questions, quiz_questions: :quiz_question_opts])
-        Lti13.QuizScoreReporter.report_quiz_score(quiz, user_id)
+        Lti13.QuizScoreReporter.report_quiz_score(quiz, user.id)
+        broadcast({:ok, quiz, event_uuid}, :quiz_updated)
         {:ok, quiz}
     end
   end
 
-  def submit_quiz(attendee_identifier, quiz_opts, quiz_id)
+  def submit_quiz(attendee_identifier, event_uuid, quiz_opts, quiz_id)
       when is_binary(attendee_identifier) and is_list(quiz_opts) do
+    quiz_opts = Enum.uniq_by(quiz_opts, & &1.id)
+
     case Enum.reduce(quiz_opts, Ecto.Multi.new(), fn opt, multi ->
-           Ecto.Multi.update(
-             multi,
+           multi
+           |> Ecto.Multi.update(
              {:update_quiz_opt, opt.id},
              QuizQuestionOpt.changeset(opt, %{"response_count" => opt.response_count + 1})
            )
@@ -309,9 +348,10 @@ defmodule Claper.Quizzes do
              })
            )
          end)
-         |> Repo.transaction() do
+         |> Repo.transact() do
       {:ok, _} ->
         quiz = get_quiz!(quiz_id, [:quiz_questions, quiz_questions: :quiz_question_opts])
+        broadcast({:ok, quiz, event_uuid}, :quiz_updated)
         {:ok, quiz}
     end
   end
@@ -439,7 +479,7 @@ defmodule Claper.Quizzes do
 
       n ->
         avg = Enum.sum(scores) / n
-        if avg == trunc(avg), do: trunc(avg), else: avg
+        if avg == trunc(avg), do: trunc(avg), else: Float.round(avg, 1)
     end
   end
 

@@ -76,19 +76,39 @@ email_confirmation =
 pool_size = get_int_from_path_or_env(config_dir, "POOL_SIZE", 10)
 queue_target = get_int_from_path_or_env(config_dir, "QUEUE_TARGET", 5_000)
 
-mail_transport = get_var_from_path_or_env(config_dir, "MAIL_TRANSPORT", "local")
+storage = get_var_from_path_or_env(config_dir, "PRESENTATION_STORAGE", "local")
+if storage not in ["local", "s3"], do: raise("Invalid PRESENTATION_STORAGE value #{storage}")
 
-smtp_relay = get_var_from_path_or_env(config_dir, "SMTP_RELAY", nil)
-smtp_username = get_var_from_path_or_env(config_dir, "SMTP_USERNAME", nil)
-smtp_password = get_var_from_path_or_env(config_dir, "SMTP_PASSWORD", nil)
-smtp_ssl = get_var_from_path_or_env(config_dir, "SMTP_SSL", "true") |> String.to_existing_atom()
-smtp_tls = get_var_from_path_or_env(config_dir, "SMTP_TLS", "always")
-smtp_auth = get_var_from_path_or_env(config_dir, "SMTP_AUTH", "always")
-smtp_port = get_int_from_path_or_env(config_dir, "SMTP_PORT", 25)
+s3_access_key_id = get_var_from_path_or_env(config_dir, "S3_ACCESS_KEY_ID")
+s3_secret_access_key = get_var_from_path_or_env(config_dir, "S3_SECRET_ACCESS_KEY")
+s3_region = get_var_from_path_or_env(config_dir, "S3_REGION")
+s3_bucket = get_var_from_path_or_env(config_dir, "S3_BUCKET")
 
-aws_access_key_id = get_var_from_path_or_env(config_dir, "AWS_ACCESS_KEY_ID", nil)
-aws_secret_access_key = get_var_from_path_or_env(config_dir, "AWS_SECRET_ACCESS_KEY", nil)
-aws_region = get_var_from_path_or_env(config_dir, "AWS_REGION", nil)
+if storage == "s3" and
+     not Enum.all?([s3_access_key_id, s3_secret_access_key, s3_region, s3_bucket]) do
+  raise(
+    "S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_REGION and S3_BUCKET required when PRESENTATION_STORAGE=s3"
+  )
+end
+
+s3_scheme = get_var_from_path_or_env(config_dir, "S3_SCHEME")
+s3_host = get_var_from_path_or_env(config_dir, "S3_HOST")
+s3_port = get_var_from_path_or_env(config_dir, "S3_PORT")
+
+if storage == "s3" do
+  if !!s3_scheme and !s3_host, do: "S3_HOST required if S3_SCHEME is set"
+  if !s3_scheme and !!s3_host, do: "S3_SCHEME required if S3_HOST is set"
+end
+
+s3_public_url =
+  get_var_from_path_or_env(
+    config_dir,
+    "S3_PUBLIC_URL",
+    if(s3_scheme && s3_host,
+      do: s3_scheme <> s3_host <> if(s3_port, do: ":#{s3_port}", else: ""),
+      else: "https://#{s3_bucket}.s3.#{s3_region}.amazonaws.com"
+    )
+  )
 
 same_site_cookie = get_var_from_path_or_env(config_dir, "SAME_SITE_COOKIE", "Lax")
 
@@ -176,9 +196,10 @@ config :claper,
 
 config :claper, :presentations,
   max_file_size: max_file_size,
-  storage: get_var_from_path_or_env(config_dir, "PRESENTATION_STORAGE", "local"),
-  aws_bucket: get_var_from_path_or_env(config_dir, "AWS_PRES_BUCKET", nil),
-  resolution: get_var_from_path_or_env(config_dir, "GS_JPG_RESOLUTION", "300x300")
+  storage: storage,
+  s3_bucket: s3_bucket,
+  resolution: get_var_from_path_or_env(config_dir, "GS_JPG_RESOLUTION", "300x300"),
+  s3_public_url: s3_public_url
 
 config :claper, :mail,
   from: get_var_from_path_or_env(config_dir, "MAIL_FROM", "noreply@claper.co"),
@@ -191,26 +212,45 @@ config :claper, ClaperWeb.MailboxGuard,
     get_var_from_path_or_env(config_dir, "ENABLE_MAILBOX_ROUTE", "false")
     |> String.to_existing_atom()
 
-case mail_transport do
+case get_var_from_path_or_env(config_dir, "MAIL_TRANSPORT", "local") do
   "smtp" ->
+    relay = get_var_from_path_or_env(config_dir, "SMTP_RELAY", nil)
+    ssl = get_var_from_path_or_env(config_dir, "SMTP_SSL", "true")
+    depth = get_int_from_path_or_env(config_dir, "SMTP_SSL_DEPTH", 2)
+
+    server =
+      get_var_from_path_or_env(config_dir, "SMTP_SSL_SERVER", relay)
+      |> to_charlist()
+
     config :claper, Claper.Mailer,
-      adapter: Swoosh.Adapters.Mua,
-      relay: smtp_relay,
-      port: smtp_port
-
-    cond do
-      smtp_username && smtp_password ->
-        config :claper, Claper.Mailer, auth: [username: smtp_username, password: smtp_password]
-
-      smtp_username || smtp_password ->
-        raise ArgumentError, """
-        Both SMTP_USERNAME and SMTP_PASSWORD must be set for SMTP authentication.
-        Please provide values for both environment variables.
-        """
-
-      true ->
-        nil
-    end
+      adapter: Swoosh.Adapters.SMTP,
+      relay: relay,
+      port: get_int_from_path_or_env(config_dir, "SMTP_PORT", 465),
+      auth: get_var_from_path_or_env(config_dir, "SMTP_AUTH", "always"),
+      username: get_var_from_path_or_env(config_dir, "SMTP_USERNAME", ""),
+      password: get_var_from_path_or_env(config_dir, "SMTP_PASSWORD", ""),
+      retries: get_int_from_path_or_env(config_dir, "SMTP_RETRIES", 1),
+      no_mx_lookups: get_var_from_path_or_env(config_dir, "SMTP_NO_MX_LOOKUPS", "false"),
+      ssl: ssl,
+      sockopts:
+        if(ssl == "true",
+          do: [
+            versions: [:"tlsv1.3", :"tlsv1.2"],
+            verify: :verify_peer,
+            cacerts: :public_key.cacerts_get(),
+            depth: depth,
+            server_name_indication: server
+          ],
+          else: []
+        ),
+      tls: get_var_from_path_or_env(config_dir, "SMTP_TLS", "if_available"),
+      tls_options: [
+        versions: [:"tlsv1.3", :"tlsv1.2"],
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        depth: depth,
+        server_name_indication: server
+      ]
 
     config :swoosh, :api_client, false
 
@@ -219,7 +259,7 @@ case mail_transport do
       adapter: Swoosh.Adapters.Postmark,
       api_key: get_var_from_path_or_env(config_dir, "POSTMARK_API_KEY", nil)
 
-    config :swoosh, :api_client, Swoosh.ApiClient.Hackney
+    config :swoosh, :api_client, Swoosh.ApiClient.Finch
 
   _ ->
     config :claper, Claper.Mailer, adapter: Swoosh.Adapters.Local
@@ -227,9 +267,12 @@ case mail_transport do
 end
 
 config :ex_aws,
-  access_key_id: aws_access_key_id,
-  secret_access_key: aws_secret_access_key,
-  region: aws_region,
+  access_key_id: s3_access_key_id,
+  secret_access_key: s3_secret_access_key,
+  region: s3_region,
   normalize_path: false
 
-config :swoosh, :api_client, Swoosh.ApiClient.Finch
+if s3_scheme && s3_host do
+  config :ex_aws,
+    s3: [scheme: s3_scheme, host: s3_host, port: s3_port]
+end

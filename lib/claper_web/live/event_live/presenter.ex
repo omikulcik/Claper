@@ -6,6 +6,8 @@ defmodule ClaperWeb.EventLive.Presenter do
   alias Claper.Polls.Poll
   alias Claper.Forms.Form
   alias Claper.Quizzes.Quiz
+  alias Claper.Presentations
+
   @impl true
   def mount(%{"code" => code} = params, session, socket) do
     with %{"locale" => locale} <- session do
@@ -70,7 +72,7 @@ defmodule ClaperWeb.EventLive.Presenter do
   end
 
   defp leader?(%{assigns: %{current_user: current_user}} = _socket, event) do
-    Claper.Events.leaded_by?(current_user.email, event) || event.user.id == current_user.id
+    Claper.Events.led_by?(current_user.email, event) || event.user.id == current_user.id
   end
 
   defp leader?(_socket, _event), do: false

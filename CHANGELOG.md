@@ -1,10 +1,41 @@
+### v.2.5.0
+
+### Security
+
+- Fix stored XSS vulnerability in custom embed iframes via input sanitization with attribute whitelisting
+- Fix XSS vulnerability in URL link formatting by escaping user-submitted URLs
+- Fix IDOR on form export endpoint by adding authorization check
+- Fix atom exhaustion DoS by replacing `String.to_atom/1` on user input with explicit whitelists (8 locations)
+- Add rate limiting on authentication endpoints using Hammer 7.0
+
+### Fixes and improvements
+
+- Fix date picker crash when hook is destroyed before initialization
+- Fix date picker crash for unsupported browser locales
+- Fix form submission crash for anonymous attendees
+- Improve SMTP config and handling (#197)
+- Fix presentation slides URL (#200)
+- Fix custom S3 endpoint (#199)
+- Fix quizz real time average score update and id duplication
+- Fix crash when broadcasting events to leaders with unregistered emails
+- Fix OIDC compatibility with providers like Authelia and Microsoft Entra ID (#216) (#143) (#195)
+
 ### v.2.4.0
+
+### ⚠️ Breaking changes 
+
+- S3 variables are now named: S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_REGION and S3_BUCKET
+- Users now have roles. Refer to the `roles` table and assign a role to a user with the `role_id` column in the `users` table.
 
 ### Features
 
+- Add Admin Panel to manage users and presentations
+- Add user roles: user, admin
 - Add `LANGUAGES` setting to configure available languages in the app
-- Add Latvian language support (@possible-im)
-- Add Hungarian language support (@bpisch)
+- Add hideable presenter attendee count (#183 #155)
+- Add Hungarian translation (#161)
+- Add Latvian translation (#163)
+- Add custom S3 endpoint with `S3_SCHEME`, `S3_HOST`, `S3_PORT` and `S3_PUBLIC_URL`
 
 ### Fixes and improvements
 
@@ -15,7 +46,11 @@
 - Fix event name validation to be required
 - Docker image is now using Ubuntu instead of Alpine for better dependencies support
 - Fix scrollbar not showing in event manager when no presentation file (#164) (@aryel780)
-- Fix settings scroll for small screen (#168) (@ChayanDass)
+- Fix settings scroll for small screen (#168)
+- Fix duplicate key quiz when duplicate (#182)
+- Fix email change confirmation (#172)
+- Fix italian translation (#179)
+- Fix random poll choices (#184)
 
 ### v.2.3.2
 

@@ -25,7 +25,9 @@ import QRCodeStyling from "qr-code-styling";
 import { Presenter } from "./presenter";
 import { Manager } from "./manager";
 import Split from "split-grid";
+import CustomHooks from "./hooks";
 import { TourGuideClient } from "@sjmc11/tourguidejs/src/Tour";
+import "./admin-charts.js";
 window.moment = moment;
 
 // Get supported locales from backend configuration or fallback to default list
@@ -59,7 +61,7 @@ var airdatepickrLocale = locale;
 if (!supportedLocales.includes(locale)) {
   locale = "en";
 }
-if (!airdatePickrSupportedLocales.includes(locale)) {
+if (!airdatePickrSupportedLocales.includes(airdatepickrLocale)) {
   airdatepickrLocale = "en";
 }
 
@@ -304,6 +306,19 @@ Hooks.EmptyNickname = {
   },
 };
 
+Hooks.SearchableSelect = {
+  mounted() {
+    this.handleEvent("update_hidden_field", (payload) => {
+      if (payload.id === this.el.id) {
+        this.el.value = payload.value;
+        // Trigger a change event to update the form
+        const event = new Event('input', { bubbles: true });
+        this.el.dispatchEvent(event);
+      }
+    });
+  }
+};
+
 Hooks.PostForm = {
   onPress(e, submitBtn, TA) {
     if (e.key == "Enter" && !e.shiftKey) {
@@ -392,12 +407,12 @@ Hooks.Pickr = {
         const utc = moment(date).utc().format("YYYY-MM-DDTHH:mm:ss");
         utcTime.value = utc;
       },
-      locale: airdatePickrLocales[airdatepickrLocale],
+      locale: airdatePickrLocales[airdatepickrLocale] || airdatePickrLocales["en"],
     });
   },
   updated() {},
   destroyed() {
-    this.pickr.destroy();
+    if (this.pickr) this.pickr.destroy();
   },
 };
 Hooks.UpdateAttendees = {
@@ -616,35 +631,61 @@ Hooks.Dropdown = {
   },
 };
 
-let Uploaders = {};
-
-Uploaders.S3 = function (entries, onViewError) {
-  entries.forEach((entry) => {
-    let formData = new FormData();
-    let { url, fields } = entry.meta;
-    Object.entries(fields).forEach(([key, val]) => formData.append(key, val));
-    formData.append("file", entry.file);
-    let xhr = new XMLHttpRequest();
-    onViewError(() => xhr.abort());
-    xhr.onload = () =>
-      xhr.status === 204 ? entry.progress(100) : entry.error();
-    xhr.onerror = () => entry.error();
-    xhr.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) {
-        let percent = Math.round((event.loaded / event.total) * 100);
-        if (percent < 100) {
-          entry.progress(percent);
-        }
-      }
+Hooks.AdminChart = {
+  mounted() {
+    const chartType = this.el.dataset.chartType;
+    const canvasId = this.el.querySelector('canvas').id;
+    const data = JSON.parse(this.el.dataset.chartData);
+    
+    if (chartType === 'users') {
+      window.AdminCharts.createUsersChart(canvasId, data);
+    } else if (chartType === 'events') {
+      window.AdminCharts.createEventsChart(canvasId, data);
+    }
+    
+    this.handleEvent("update_chart", (newData) => {
+      window.AdminCharts.updateChart(canvasId, newData);
     });
-
-    xhr.open("POST", url, true);
-    xhr.send(formData);
-  });
+  },
+  
+  updated() {
+    const chartType = this.el.dataset.chartType;
+    const canvasId = this.el.querySelector('canvas').id;
+    const data = JSON.parse(this.el.dataset.chartData);
+    
+    if (chartType === 'users') {
+      window.AdminCharts.createUsersChart(canvasId, data);
+    } else if (chartType === 'events') {
+      window.AdminCharts.createEventsChart(canvasId, data);
+    }
+  },
+  
+  destroyed() {
+    const canvasId = this.el.querySelector('canvas').id;
+    window.AdminCharts.destroyChart(canvasId);
+  }
 };
 
+Hooks.CSVDownloader = {
+  mounted() {
+    this.handleEvent("download_csv", ({ filename, content }) => {
+      const blob = new Blob([content], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    });
+  }
+};
+
+// Merge our custom hooks with the existing hooks
+Object.assign(Hooks, CustomHooks);
+
 let liveSocket = new LiveSocket("/live", Socket, {
-  uploaders: Uploaders,
   params: {
     _csrf_token: csrfToken,
     tz: Intl.DateTimeFormat().resolvedOptions().timeZone,

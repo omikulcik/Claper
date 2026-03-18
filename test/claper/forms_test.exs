@@ -51,13 +51,15 @@ defmodule Claper.FormsTest do
         presentation_file_id: presentation_file.id,
         position: 0,
         fields: [
-          %{name: "some option 1", type: "text"},
+          %{name: "some option 1", type: "text", required: false},
           %{name: "some option 2", type: "email"}
         ]
       }
 
       assert {:ok, %Form{} = form} = Forms.create_form(valid_attrs)
       assert form.title == "some title"
+      assert Enum.at(form.fields, 0) |> Map.fetch!(:required) == false
+      assert Enum.at(form.fields, 1) |> Map.fetch!(:required) == true
     end
 
     test "create_form/1 with invalid data returns error changeset" do
@@ -123,6 +125,63 @@ defmodule Claper.FormsTest do
                    "response" => %{:Test => "some option 1", :"Test 2" => "some option 2"}
                  }
                )
+    end
+
+    test "create_or_update_form_submit/2 with attendee_identifier creates a form_submit" do
+      presentation_file = presentation_file_fixture(%{}, [:event])
+      f = form_fixture(%{presentation_file_id: presentation_file.id})
+
+      assert {:ok, %Claper.Forms.FormSubmit{} = form_submit} =
+               Forms.create_or_update_form_submit(
+                 presentation_file.event.uuid,
+                 %{
+                   "attendee_identifier" => "test-attendee-123",
+                   "form_id" => f.id,
+                   "response" => %{"Name" => "Daniel"}
+                 }
+               )
+
+      assert form_submit.attendee_identifier == "test-attendee-123"
+      assert is_nil(form_submit.user_id)
+      assert form_submit.form_id == f.id
+    end
+
+    test "create_or_update_form_submit/2 with attendee_identifier updates existing form_submit" do
+      presentation_file = presentation_file_fixture(%{}, [:event])
+      f = form_fixture(%{presentation_file_id: presentation_file.id})
+
+      {:ok, _first_submit} =
+        Forms.create_or_update_form_submit(
+          presentation_file.event.uuid,
+          %{
+            "attendee_identifier" => "test-attendee-123",
+            "form_id" => f.id,
+            "response" => %{"Name" => "Daniel"}
+          }
+        )
+
+      assert {:ok, %Claper.Forms.FormSubmit{} = updated_submit} =
+               Forms.create_or_update_form_submit(
+                 presentation_file.event.uuid,
+                 %{
+                   "attendee_identifier" => "test-attendee-123",
+                   "form_id" => f.id,
+                   "response" => %{"Name" => "Updated Name"}
+                 }
+               )
+
+      assert updated_submit.response == %{"Name" => "Updated Name"}
+    end
+
+    test "create_or_update_form_submit/2 without user_id or attendee_identifier returns error" do
+      presentation_file = presentation_file_fixture(%{}, [:event])
+      f = form_fixture(%{presentation_file_id: presentation_file.id})
+
+      assert {:error, %Ecto.Changeset{}} =
+               Forms.create_form_submit(%{
+                 form_id: f.id,
+                 response: %{"Name" => "Daniel"}
+               })
     end
   end
 end

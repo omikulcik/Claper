@@ -216,27 +216,17 @@
         </div>
       <% end %>
       <div class={"#{if @current_embed, do: "hidden", else: ""} text-center"} id="slider">
-        <%= for index <- 1..max(1, @event.presentation_file.length) do %>
-          <%= if @event.presentation_file.length > 0 do %>
-            <%= if Application.get_env(:claper, :presentations) |> Keyword.get(:storage) == "local" do %>
-              <img
-                class="max-h-screen w-auto!"
-                src={"/uploads/#{@event.presentation_file.hash}/#{index}.jpg"}
-              />
-            <% else %>
-              <img
-                class=" max-h-screen w-auto!"
-                src={"https://#{Application.get_env(:claper, :presentations) |> Keyword.get(:aws_bucket)}.s3.#{Application.get_env(:ex_aws, :region)}.amazonaws.com/presentations/#{@event.presentation_file.hash}/#{index}.jpg"}
-              />
-            <% end %>
-          <% end %>
-        <% end %>
+        <img
+          :for={src <- Presentations.get_slide_urls(@event.presentation_file)}
+          src={src}
+          class="max-h-screen w-auto!"
+        />
       </div>
     </div>
   </div>
   <!-- ONLINE BADGE -->
   <div
-    :if={!@iframe}
+    :if={!@iframe && @state.show_attendee_count}
     class="absolute z-20 bottom-5 right-5 px-4 pt-3 pb-1 rounded-md bg-black shadow-md text-white flex-1"
   >
     <div id="reacts" phx-hook="GlobalReacts" data-class-name="h-24" phx-update="ignore"></div>
