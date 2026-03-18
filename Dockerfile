@@ -65,7 +65,7 @@ RUN mix release
 FROM ${RUNNER_IMAGE}
 
 RUN apt-get update -y && apt-get install -y curl libstdc++6 openssl locales ghostscript default-jre libreoffice-java-common \
-  && apt-get install -y libreoffice --no-install-recommends && apt-get clean && rm -f /var/lib/apt/lists/*_*
+    && apt-get install -y libreoffice --no-install-recommends && apt-get clean && rm -f /var/lib/apt/lists/*_*
 # RUN apk add --no-cache curl libstdc++ openssl ncurses ghostscript openjdk11-jre
 
 # Install LibreOffice & Common Fonts
@@ -93,7 +93,7 @@ ENV MIX_ENV="prod"
 
 
 # Only copy the final release from the build stage
-COPY --from=builder --chmod=a+rX /app/_build/prod/rel/claper /app
+COPY --from=builder --chmod=755 /app/_build/prod/rel/claper /app
 COPY --from=builder /app/priv/repo/seeds.exs /app/priv/repo/
 RUN mkdir /app/uploads && chmod -R 777 /app/uploads
 
