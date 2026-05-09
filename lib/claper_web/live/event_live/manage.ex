@@ -687,6 +687,12 @@ defmodule ClaperWeb.EventLive.Manage do
   end
 
   @impl true
+  def handle_event("delete-all-posts", _params, socket) do
+    Claper.Posts.delete_all_event_posts(socket.assigns.event)
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("sort-questions", %{"sort" => sort}, socket) do
     {:noreply,
      socket

@@ -370,6 +370,14 @@ defmodule ClaperWeb.EventLive.Show do
   end
 
   @impl true
+  def handle_event("delete-all-posts", _params, %{assigns: %{is_leader: true}} = socket) do
+    Posts.delete_all_event_posts(socket.assigns.event)
+    {:noreply, socket}
+  end
+
+  def handle_event("delete-all-posts", _params, socket), do: {:noreply, socket}
+
+  @impl true
   def handle_event(
         "save",
         %{"post" => post_params},

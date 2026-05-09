@@ -232,6 +232,19 @@ defmodule Claper.Posts do
     end
   end
 
+  @doc """
+  Deletes all posts for the given event.
+  """
+  def delete_all_event_posts(event) do
+    posts =
+      from(post in Claper.Posts.Post, where: post.event_id == ^event.id)
+      |> Repo.all()
+
+    for post <- posts do
+      delete_post(%{post | event: event})
+    end
+  end
+
   alias Claper.Posts.{Reaction, Post}
 
   @doc """
